@@ -3,24 +3,28 @@ package proxy
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"strconv"
 	"x-proxy/app"
 )
 
 type DebugTransport struct{}
 
 func (DebugTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	return http.DefaultTransport.RoundTrip(request)
+	response, err := http.DefaultTransport.RoundTrip(request)
+
+	if err != nil {
+		app.Application.Log.Info("RoundTrip Error: ", err)
+	}
+
+	return response, err
 }
 
 func Proxy(writer http.ResponseWriter, request *http.Request) {
 
-	proxyRequest := request.WithContext(context.TODO())
+	proxyRequest := request.WithContext(context.Background())
 	reverseProxy, err := createReverseProxy()
 
 	if err != nil {
@@ -32,30 +36,27 @@ func Proxy(writer http.ResponseWriter, request *http.Request) {
 
 	app.Application.Log.Info("Forwarding request to reverse proxy")
 
-	reverseProxy.ModifyResponse = rewriteBody
 	reverseProxy.ServeHTTP(writer, proxyRequest)
 }
 
-func rewriteBody(resp *http.Response) (err error) {
-
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
+func modifyResponse(response *http.Response) error {
+	app.Application.Log.Info("ModifyResponse Status: ", response.StatusCode)
+	for key, value := range response.Header {
+		app.Application.Log.Info("Key: ", key, "Value: ", value)
 	}
-	err = resp.Body.Close()
-	if err != nil {
-		return err
-	}
-
-	body := io.NopCloser(bytes.NewReader(b))
-	resp.Body = body
-	resp.ContentLength = int64(len(b))
-	resp.Header.Set("Content-Length", strconv.Itoa(len(b)))
 	return nil
 }
 
 func reverseProxyErrorHandler(writer http.ResponseWriter, request *http.Request, err error) {
-	app.Application.Log.Error("ReverseProxyErrorHandler: ", err)
+	app.Application.Log.Error("ReverseProxyErrorHandler: ", "error: ", err)
+	app.Application.Log.Error("RequestURI: ", request.RequestURI)
+	app.Application.Log.Error("Method: ", request.Method)
+	app.Application.Log.Error("URL: ", request.URL)
+
+	// TODO: improve logs
+	if request.Body == nil {
+		return
+	}
 
 	b, err := io.ReadAll(request.Body)
 
@@ -77,19 +78,6 @@ func reverseProxyErrorHandler(writer http.ResponseWriter, request *http.Request,
 
 	body := io.NopCloser(bytes.NewReader(b))
 	request.Body = body
-
-	var result map[string]interface{}
-	err = json.Unmarshal(b, &result)
-
-	if err != nil {
-		app.Application.Log.Error("json.Unmarshal - ", err)
-		writer.WriteHeader(http.StatusBadGateway)
-		_, _ = writer.Write([]byte("Reverse proxy not available!"))
-		return
-	}
-
-	writer.WriteHeader(http.StatusBadGateway)
-	_, _ = writer.Write([]byte("Reverse proxy not available!"))
 }
 
 func createReverseProxy() (*httputil.ReverseProxy, error) {
@@ -101,9 +89,10 @@ func createReverseProxy() (*httputil.ReverseProxy, error) {
 	}
 
 	proxy := &httputil.ReverseProxy{
-		Director:     director,
-		Transport:    DebugTransport{},
-		ErrorHandler: reverseProxyErrorHandler,
+		Director:       director,
+		Transport:      DebugTransport{},
+		ErrorHandler:   reverseProxyErrorHandler,
+		ModifyResponse: modifyResponse,
 	}
 
 	return proxy, err

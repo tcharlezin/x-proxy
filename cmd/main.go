@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/cors"
 	"log"
 	"net/http"
 	"x-proxy/app"
@@ -9,13 +11,9 @@ import (
 )
 
 func main() {
-
-	mutex := http.NewServeMux()
-	mutex.HandleFunc("/", proxy.Proxy)
-
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%s", app.Application.WebPort),
-		Handler: mutex,
+		Handler: Routes(),
 	}
 
 	app.Application.Log.Info(fmt.Sprintf("Starting server on :%s", app.Application.WebPort))
@@ -24,4 +22,23 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
+}
+
+func Routes() http.Handler {
+
+	router := chi.NewRouter()
+
+	// specify who is allowed to connect
+	router.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"https://*", "http://*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		ExposedHeaders:   []string{"Link"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
+
+	router.Post("/", proxy.Proxy)
+	router.Get("/", proxy.Proxy)
+	return router
 }
