@@ -2,24 +2,39 @@ package proxy
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
+	"strings"
+	"time"
 	"x-proxy/app"
 )
 
-type DebugTransport struct{}
+type HandlerTransport struct {
+}
 
-func (DebugTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	response, err := http.DefaultTransport.RoundTrip(request)
+func (HandlerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 
-	if err != nil {
-		app.Application.Log.Info("RoundTrip Error: ", err)
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		DisableCompression:    true,
 	}
 
-	return response, err
+	return transport.RoundTrip(request)
 }
 
 func Proxy(writer http.ResponseWriter, request *http.Request) {
@@ -39,21 +54,46 @@ func Proxy(writer http.ResponseWriter, request *http.Request) {
 	reverseProxy.ServeHTTP(writer, proxyRequest)
 }
 
-func modifyResponse(response *http.Response) error {
-	app.Application.Log.Info("ModifyResponse Status: ", response.StatusCode)
-	for key, value := range response.Header {
-		app.Application.Log.Info("Key: ", key, "Value: ", value)
+func modifyResponse(resp *http.Response) error {
+
+	readBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
 	}
+	resp.Body.Close()
+
+	// Decode Gzip
+	reader := bytes.NewReader(readBody)
+	gzreader, err := gzip.NewReader(reader)
+	if err != nil {
+		return err
+	}
+
+	output, err := io.ReadAll(gzreader)
+	if err != nil {
+		return err
+	}
+
+	htmlResponse := string(output)
+	htmlResponse = strings.ReplaceAll(htmlResponse, "https://twitter.com", os.Getenv("TWITTER_HOST"))
+
+	// Encode with GZip
+	var b bytes.Buffer
+	gz := gzip.NewWriter(&b)
+	if _, err = gz.Write([]byte(htmlResponse)); err != nil {
+		return err
+	}
+	if err = gz.Close(); err != nil {
+		return err
+	}
+
+	gzipEncoded := b.Bytes()
+	resp.Body = io.NopCloser(bytes.NewReader(gzipEncoded))
 	return nil
 }
 
 func reverseProxyErrorHandler(writer http.ResponseWriter, request *http.Request, err error) {
-	app.Application.Log.Error("ReverseProxyErrorHandler: ", "error: ", err)
-	app.Application.Log.Error("RequestURI: ", request.RequestURI)
-	app.Application.Log.Error("Method: ", request.Method)
-	app.Application.Log.Error("URL: ", request.URL)
 
-	// TODO: improve logs
 	if request.Body == nil {
 		return
 	}
@@ -90,7 +130,7 @@ func createReverseProxy() (*httputil.ReverseProxy, error) {
 
 	proxy := &httputil.ReverseProxy{
 		Director:       director,
-		Transport:      DebugTransport{},
+		Transport:      HandlerTransport{},
 		ErrorHandler:   reverseProxyErrorHandler,
 		ModifyResponse: modifyResponse,
 	}

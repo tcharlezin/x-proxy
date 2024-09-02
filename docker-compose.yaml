@@ -12,7 +12,7 @@ services:
     environment:
       WEB_PORT: ${WEB_PORT}
       TARGET_HOST: ${TARGET_HOST}
+      TWITTER_HOST: ${TWITTER_HOST}
     volumes:
       - ./:/app
-
 

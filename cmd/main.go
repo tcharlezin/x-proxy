@@ -38,7 +38,6 @@ func Routes() http.Handler {
 		MaxAge:           300,
 	}))
 
-	router.Post("/", proxy.Proxy)
-	router.Get("/", proxy.Proxy)
+	router.HandleFunc("/", proxy.Proxy)
 	return router
 }
