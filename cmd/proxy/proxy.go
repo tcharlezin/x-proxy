@@ -76,6 +76,8 @@ func modifyResponse(resp *http.Response) error {
 
 	htmlResponse := string(output)
 	htmlResponse = strings.ReplaceAll(htmlResponse, "https://twitter.com", os.Getenv("TWITTER_HOST"))
+	htmlResponse = strings.ReplaceAll(htmlResponse, "https://x.com", os.Getenv("X_HOST"))
+	htmlResponse = strings.ReplaceAll(htmlResponse, "https://api.x.com", os.Getenv("API_HOST"))
 
 	// Encode with GZip
 	var b bytes.Buffer

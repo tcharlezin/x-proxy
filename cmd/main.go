@@ -37,7 +37,7 @@ func Routes() http.Handler {
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
-
-	router.HandleFunc("/", proxy.Proxy)
+	
+	router.HandleFunc("/*", proxy.Proxy)
 	return router
 }
